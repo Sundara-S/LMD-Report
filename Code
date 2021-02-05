@@ -1,0 +1,231 @@
+# LMD-Report
+import pandas as pd
+from pandas import DataFrame
+import matplotlib.pyplot as plt
+import numpy as np
+import xlrd
+import xlwt
+import csv
+import pyodbc
+from IPython import display
+from datetime import datetime
+import os
+import smtplib
+from string import Template
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.base import MIMEBase
+from email import encoders
+import os
+import sys
+from datetime import datetime,timedelta
+from datetime import datetime
+from datetime import date,timedelta
+import ftplib
+from calendar import monthrange
+import mysql
+import mysql.connector
+import pymysql
+
+todate=date.today()-timedelta(0)
+startdate=datetime.strftime(todate,'%Y-%m-%d')
+todate1=date.today()-timedelta(1)
+enddate=datetime.strftime(todate1,'%Y-%m-%d')
+todate2=date.today()-timedelta(0)
+Currentdate=datetime.strftime(todate2,'%Y-%m-%d')
+
+cnxn = mysql.connector.connect(host="spot-appdb.cf0mzuxykcz4.ap-south-1.rds.amazonaws.com",user="root",passwd="bD4LApp-Sp0t#$",database='erts')
+cursor = cnxn.cursor()
+
+pd.set_option("display.max_rows", None, "display.max_columns", None)
+
+Query1 = ("""SELECT * FROM inbound_trip_details
+""")
+df1=pd.read_sql(Query1,cnxn)
+
+Query2 = ("""SELECT * FROM driver_dkt
+""")
+df2=pd.read_sql(Query2,cnxn)
+df2_1 = df2.rename(columns={'dkt_no': 'vendor_dkt'})
+
+Left_join = pd.merge(df1, df2_1, on ='vendor_dkt') 
+Left_join.head()
+
+Query3 = ("""SELECT * FROM m_vehicle
+""")
+df3=pd.read_sql(Query3,cnxn)
+df3_1 = df3.rename(columns={'id': 'vehicle_id'})
+
+Left_join2 = pd.merge(Left_join, df3_1, on ='vehicle_id') 
+Left_join2.head()
+
+Query4 = ("""SELECT * FROM m_sub_project
+""")
+df4=pd.read_sql(Query4,cnxn)
+df4_1 = df4.rename(columns={'id': 'subproject_id'})
+
+Left_join3 = pd.merge(Left_join2, df4_1, on ='subproject_id') 
+Left_join3.head()
+
+Query5 = ("""SELECT * FROM m_branch
+""")
+df5=pd.read_sql(Query5,cnxn)
+df5_1 = df5.rename(columns={'id': 'branch'})
+
+Left_join4 = pd.merge(Left_join3, df5_1, on ='branch') 
+Left_join4.head()
+
+Query6 = ("""SELECT * FROM m_project_type
+""")
+df6=pd.read_sql(Query6,cnxn)
+df6_1 = df6.rename(columns={'project_type': 'project_type_name'})
+df6_2 = df6_1.rename(columns={'id': 'project_type'})
+
+Left_join5 = pd.merge(Left_join4, df6_2, on ='project_type')
+# Left_join5.head()
+Left_join6 = Left_join5[Left_join5.pickup_timestamp == enddate]
+# Left_join6
+
+# Left_join5['TC Trigerred (Y/N)']=Left_join5['driver_mobileno'].apply(lambda x: 'N' if x=='9999999999' else 'Y')
+# jt = Left_join5[(Left_join5.branch_location == "GURGAON") & (Left_join5.pickup_timestamp =="2021-01-18") & (Left_join5.project_type_name =="Redelivery") & (Left_join5.vendor_dkt ==28049)]
+
+# filter_list = ['GURGAON']
+# Pivot = Left_join4[Left_join4.branch_location.isin(filter_list)]
+# Pivot.head(300)
+
+Left_join6 = Left_join5[(Left_join5.vehicle_number == "HR55AD9815") & (Left_join5.pickup_timestamp == "2021-01-27") & (Left_join5.vendor_dkt == "29981")]
+Left_join6.head()
+
+# Left_join6
+
+Left_join6['TC Trigerred (Y/N)']=Left_join6['driver_mobileno'].apply(lambda x: 'TC Not Triggered' if x=='9999999999' else 'TC Triggered')
+Left_join6['Driver Captured POD (Y/N)']=Left_join6['pod'].apply(lambda x: 'POD Not Captured' if x== None else 'POD Captured')
+Left_join7=Left_join6[(Left_join5.sequence > 1.0)]
+
+# Left_join6.head()
+
+LR_Level_Data = pd.pivot_table(Left_join7, values='id', index=['branch_location','project_type_name','sub_project_name', 'vehicle_number','vendor_dkt','sequence' ,'TC Trigerred (Y/N)', 'Driver Captured POD (Y/N)'],
+                    columns=[], aggfunc={'id':len}, fill_value=0, margins=True, margins_name='Total TCs')
+
+# LR_Level_Data
+
+Table_2 = pd.pivot_table(Left_join7, values='vendor_dkt', index=['branch_location','project_type_name','sub_project_name','vehicle_number'],
+                    columns=['TC Trigerred (Y/N)'], aggfunc={'vendor_dkt':len}, fill_value=0)
+
+# Table_2.reset_index( inplace=False)
+
+# Table_2
+
+Table_3 = pd.pivot_table(Left_join7, values='vendor_dkt', index=['branch_location','project_type_name','sub_project_name','vehicle_number'],
+                    columns=['Driver Captured POD (Y/N)'], aggfunc={'vendor_dkt':len}, fill_value=0, margins=True, margins_name='Total TCs')
+
+# Table_3.reset_index( inplace=False)
+
+# Table_3
+
+Veh_Level_data = pd.merge(Table_2,Table_3,left_index=True,right_index=True)
+
+
+# Veh_Level_data
+
+Table_4 = pd.pivot_table(Left_join7, values='vendor_dkt', index=['branch_location'],
+                    columns=['TC Trigerred (Y/N)'], aggfunc={'vendor_dkt':len}, fill_value=0)
+
+Table_5 = pd.pivot_table(Left_join7, values='vendor_dkt', index=['branch_location'],
+                    columns=['Driver Captured POD (Y/N)'], aggfunc={'vendor_dkt':len}, fill_value=0,margins=True, margins_name='Total TCs')
+
+Location_Summary = pd.merge(Table_4,Table_5,left_index=True,right_index=True)
+
+# Location_Summary
+
+filepath1 = pd.ExcelWriter(r'C:\Users\s3555sun\Desktop\LMD.xlsx', engine='xlsxwriter')
+# filepath1=r'C:\Users\s3555sun\Desktop\LMD1.xlsx'
+Location_Summary.to_excel(filepath1, sheet_name='Sheet1')
+Veh_Level_data.to_excel(filepath1, sheet_name='Sheet2')
+LR_Level_Data.to_excel(filepath1, sheet_name='Sheet3')
+filepath1.save()
+
+MY_ADDRESS = 'sundaram.s@spoton.co.in'
+PASSWORD = 'P@ssw0rd'
+
+# Setup the parameters of the message
+FROM = MY_ADDRESS
+# TO = ['sundaram.s@spoton.co.in']
+TO= ['hprasad@rts-logistics.com','smamta@rts-logistics.com', 'thiyagarajanj@rts-logistics.com','redwin@rts-logistics.com','klakshmipriya@rts-logistics.com' ,'araman@rts-logistics.com', 'csivan@rts-logistics.com', 'fasteners-hosur-hub@rts-logistics.com', 'mvasanth@rts-logistics.com']
+CC= ['jjestin@rts-logistics.com', 'nmanjunath@rts-logistics.com', 'anarayanan@rts-logistics.com']
+msg = MIMEMultipart()
+msg["From"] = FROM
+msg["To"] = ",".join(TO)
+msg["CC"] = ",".join(CC)
+#msg["BCC"] = ",".join(BCC)
+msg["Subject"] = "LMD Compliance Report- Summary Table"+ " - " + str(Currentdate)    
+ 
+#Body of the Mail
+report_Summary_Table=""
+report_Summary_Table+="Dear All"
+report_Summary_Table+='<br>'
+report_Summary_Table+='<br>'
+report_Summary_Table+="Please find below the LMD Compliance Summary Report as of"+ " - " + str(enddate)
+report_Summary_Table+='<br>'
+report_Summary_Table+='<br>'
+report_Summary_Table+="Please check the attached file which consists of 3 sheets as below:"
+report_Summary_Table+='<br>'
+report_Summary_Table+="Sheet-1: Location wise summary"
+report_Summary_Table+='<br>'
+report_Summary_Table+="Sheet-2: Vehicle wise report"
+report_Summary_Table+='<br>'
+report_Summary_Table+="Sheet-3: TC/LR Level Report"
+report_Summary_Table+='<br>'
+report_Summary_Table+="Please reach out to me for any queries"
+# report_Summary_Table+='<br>'
+# report_Summary_Table+="And False means number of cons whose shipper copy is not triggered to the Customer"
+# report_Summary_Table+='<br>'
+# report_Summary_Table+="The Reasons for a con showing under False Category are as follows:"
+# report_Summary_Table+='<br>'
+# report_Summary_Table+="1. The vendor would have captured wrong mail id of the sender."
+# report_Summary_Table+='<br>'
+# report_Summary_Table+="2. IT Issue."
+# report_Summary_Table+='<br>'
+# report_Summary_Table+="3. The tab id through which that particular con is booked is not enabled for the eCon-note process."
+report_Summary_Table+='<br>'
+report_Summary_Table+='<br>'
+report_Summary_Table+="Location_Summary"
+report_Summary_Table+='<br>'
+report_Summary_Table+=Location_Summary.to_html()
+report_Summary_Table+='<br>'
+# report_Summary_Table+='<br>'
+# report_Summary_Table+="Table-2"
+# report_Summary_Table+='<br>'
+# report_Summary_Table+=Table_2.to_html()
+#report_Summary_Table+='<br>'
+#report_Summary_Table+="User ID wise List"
+#report_Summary_Table+=BLRB_eCons_List.to_html()
+report_Summary_Table+='<br>'
+report_Summary_Table+="Thanks and Regards"
+        
+# Depotpivot_std
+abc_Summary_Table=MIMEText(report_Summary_Table,'html')
+msg.attach(abc_Summary_Table)
+
+filepath1=r'C:\Users\s3555sun\Desktop\LMD.xlsx'
+part1 = MIMEBase('application', "octet-stream")
+part1.set_payload(open(filepath1,"rb").read() )
+encoders.encode_base64(part1)
+part1.add_header('Content-Disposition', 'attachment; filename="%s"' % os.path.basename(filepath1))
+msg.attach(part1)
+
+# part1 = MIMEBase('application', "octet-stream")
+# part1.set_payload(CSV_File)
+# #encoders.encode_base64(part1)
+# #part1.add_header('Content-Disposition', 'attachment; filename="Summary Report"')
+#msg.attach(CSV_File)
+        
+# Send the message via the server set up earlier.
+s = smtplib.SMTP(host='smtp.gmail.com', port=587)
+s.starttls()
+s.login(MY_ADDRESS, PASSWORD)
+s.send_message(msg)
+del msg
+        
+# Terminate the SMTP session and close the connection
+s.quit()
